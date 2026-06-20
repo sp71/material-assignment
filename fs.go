@@ -89,10 +89,15 @@ func (fs *FS) Ls() []string {
 	return names
 }
 
-// lookupFile resolves name to a *file within the current working directory. It
-// must be called with at least FS.mu held for reading. It is the shared
-// resolution step for the file content operations.
-func (fs *FS) lookupFile(name string) (*file, error) {
+// resolveFile resolves name to a *file in the current working directory under a
+// brief read lock, releasing it before returning. It is the shared resolution
+// step for the file-content and streaming operations: they take the file's own
+// content lock only after FS.mu is released, never nesting the two. Returns
+// ErrInvalidName, ErrNotFound, or ErrIsDir.
+func (fs *FS) resolveFile(name string) (*file, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
 	if err := validateName(name); err != nil {
 		return nil, wrap(name, err)
 	}

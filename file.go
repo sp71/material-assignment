@@ -26,9 +26,7 @@ func (fs *FS) CreateFile(name string) error {
 // content lock for the copy — so it is memory-safe even while a streaming
 // writer is open on the same file (the two serialize on the content lock).
 func (fs *FS) WriteFile(name string, data []byte) error {
-	fs.mu.RLock()
-	f, err := fs.lookupFile(name)
-	fs.mu.RUnlock()
+	f, err := fs.resolveFile(name)
 	if err != nil {
 		return err
 	}
@@ -45,9 +43,7 @@ func (fs *FS) WriteFile(name string, data []byte) error {
 // directory. Returns ErrNotFound if there is no such file and ErrIsDir if the
 // name refers to a directory. The returned slice is a copy and safe to retain.
 func (fs *FS) ReadFile(name string) ([]byte, error) {
-	fs.mu.RLock()
-	f, err := fs.lookupFile(name)
-	fs.mu.RUnlock()
+	f, err := fs.resolveFile(name)
 	if err != nil {
 		return nil, err
 	}

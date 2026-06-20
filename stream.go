@@ -46,9 +46,7 @@ type FileWriter struct {
 // Open returns a read handle for a file in the current working directory. Any
 // number of readers may be open concurrently. Returns ErrNotFound or ErrIsDir.
 func (fs *FS) Open(name string) (*FileReader, error) {
-	fs.mu.RLock()
-	f, err := fs.lookupFile(name)
-	fs.mu.RUnlock()
+	f, err := fs.resolveFile(name)
 	if err != nil {
 		return nil, err
 	}
@@ -61,9 +59,7 @@ func (fs *FS) Open(name string) (*FileReader, error) {
 // content (like opening O_WRONLY without O_TRUNC); seek or WriteAt for random
 // access, or use WriteFile to replace contents wholesale.
 func (fs *FS) OpenWriter(name string) (*FileWriter, error) {
-	fs.mu.RLock()
-	f, err := fs.lookupFile(name)
-	fs.mu.RUnlock()
+	f, err := fs.resolveFile(name)
 	if err != nil {
 		return nil, err
 	}

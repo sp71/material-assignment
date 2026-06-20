@@ -13,11 +13,6 @@ import (
 // returning any other non-nil error aborts the walk and is returned by Walk.
 type WalkFunc func(path string, isDir bool) error
 
-// SkipDir, when returned by a WalkFunc for a directory, tells Walk not to
-// descend into that directory. Returned for a file it simply skips nothing
-// further (files have no subtree).
-var SkipDir = errors.New("skip directory subtree")
-
 // Walk visits every descendant of the current working directory, depth-first
 // and in sorted order within each directory (so results are deterministic),
 // invoking fn for each.

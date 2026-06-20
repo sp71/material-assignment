@@ -21,6 +21,11 @@ var (
 	ErrClosed      = errors.New("handle is closed")
 )
 
+// SkipDir is a sentinel returned by a WalkFunc to tell Walk not to descend into
+// the directory it was passed. Returned for a file it has no effect (files have
+// no subtree). It is a signal, not a failure, so Walk does not propagate it.
+var SkipDir = errors.New("skip directory subtree")
+
 // wrap annotates a sentinel error with the name that triggered it while keeping
 // the sentinel reachable through errors.Is/errors.Unwrap. Example result:
 // "lunch: no such file or directory".
