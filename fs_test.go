@@ -31,6 +31,20 @@ func TestCdParentAtRootIsNoOp(t *testing.T) {
 	assert.Equal(t, "/", fs.Pwd())
 }
 
+func TestCdCurrentDirIsNoOp(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.Mkdir("a"))
+	require.NoError(t, fs.Cd("a"))
+
+	require.NoError(t, fs.Cd("."), `Cd(".") should be a no-op`)
+	assert.Equal(t, "/a", fs.Pwd(), `Cd(".") must not move`)
+}
+
+func TestCdEmptyNameErrors(t *testing.T) {
+	fs := New()
+	assert.ErrorIs(t, fs.Cd(""), ErrInvalidName)
+}
+
 func TestCdErrors(t *testing.T) {
 	fs := New()
 	require.NoError(t, fs.CreateFile("afile"))

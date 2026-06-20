@@ -41,15 +41,21 @@ func (fs *FS) Pwd() string {
 	return absPath(fs.cwd)
 }
 
-// Cd changes the current working directory. name must be a single child
-// directory name or "..", which moves to the parent (a no-op at the root, like
-// a shell). Returns ErrNotFound if no such child exists and ErrNotDir if the
-// child is a file.
+// Cd changes the current working directory. name is a single child directory
+// name, or a navigation shorthand: "." stays in place and ".." moves to the
+// parent (a no-op at the root, like a shell). Returns ErrInvalidName for an
+// empty name, ErrNotFound if no such child exists, and ErrNotDir if the child
+// is a file.
 func (fs *FS) Cd(name string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	if name == ".." {
+	switch name {
+	case "":
+		return wrap(name, ErrInvalidName)
+	case ".":
+		return nil // current directory
+	case "..":
 		if fs.cwd.par != nil {
 			fs.cwd = fs.cwd.par
 		}
