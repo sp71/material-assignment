@@ -1,0 +1,288 @@
+package memfs
+
+import (
+	"errors"
+	"io"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestStreamWriteThenRead(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	_, err = w.Write([]byte("hello world"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("hello world"), got)
+}
+
+func TestStreamChunkedRead(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+	require.NoError(t, fs.WriteFile("f", []byte("abcdefg")))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	var got []byte
+	buf := make([]byte, 3) // smaller than the content: forces multiple reads
+	for {
+		n, err := r.Read(buf)
+		got = append(got, buf[:n]...)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+	assert.Equal(t, []byte("abcdefg"), got)
+}
+
+func TestStreamRandomAccess(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	_, err = w.Write([]byte("AAAA")) // -> AAAA
+	require.NoError(t, err)
+	_, err = w.WriteAt([]byte("BB"), 1) // overwrite middle -> ABBA
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	// ReadAt does not move the offset.
+	buf := make([]byte, 2)
+	_, err = r.ReadAt(buf, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("BB"), buf)
+
+	// Seek to end-1 and read the last byte.
+	_, err = r.Seek(-1, io.SeekEnd)
+	require.NoError(t, err)
+	last := make([]byte, 1)
+	_, err = r.Read(last)
+	require.NoError(t, err)
+	assert.Equal(t, byte('A'), last[0], "content should be ABBA")
+}
+
+func TestStreamWritePastEndExtends(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	_, err = w.WriteAt([]byte("Z"), 4) // gap [0,4) zero-filled
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	got, err := fs.ReadFile("f")
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0, 0, 0, 0, 'Z'}, got)
+}
+
+func TestStreamReadPastEndIsEOF(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+	require.NoError(t, fs.WriteFile("f", []byte("ab")))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	_, err = r.Seek(10, io.SeekStart)
+	require.NoError(t, err)
+	_, err = r.Read(make([]byte, 4))
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestStreamClosedHandle(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	require.NoError(t, r.Close(), "Close is idempotent")
+
+	_, err = r.Read(make([]byte, 1))
+	assert.ErrorIs(t, err, ErrClosed)
+	_, err = r.Seek(0, io.SeekStart)
+	assert.ErrorIs(t, err, ErrClosed)
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	_, err = w.Write([]byte("x"))
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestOpenWriterSingleWriter(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	w1, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+
+	_, err = fs.OpenWriter("f")
+	assert.ErrorIs(t, err, ErrWriterBusy)
+
+	// Closing the first writer frees the slot.
+	require.NoError(t, w1.Close())
+	w2, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	require.NoError(t, w2.Close())
+}
+
+func TestStreamOpenErrors(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.Mkdir("d"))
+
+	_, err := fs.Open("missing")
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	_, err = fs.Open("d")
+	assert.ErrorIs(t, err, ErrIsDir)
+
+	_, err = fs.OpenWriter("d")
+	assert.ErrorIs(t, err, ErrIsDir)
+}
+
+// TestStreamSurvivesMove opens a reader, renames the file out from under it,
+// and confirms the read still returns the original bytes — the handle binds to
+// content, not path.
+func TestStreamSurvivesMove(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("old"))
+	require.NoError(t, fs.WriteFile("old", []byte("payload")))
+
+	r, err := fs.Open("old")
+	require.NoError(t, err)
+	defer r.Close()
+
+	require.NoError(t, fs.Move("old", "new"))
+
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("payload"), got)
+
+	_, err = fs.ReadFile("new")
+	assert.NoError(t, err, "file should be reachable under its new name")
+}
+
+// TestStreamSurvivesRemove opens a reader, removes the file, and confirms the
+// read still succeeds (Unix unlink-while-open semantics).
+func TestStreamSurvivesRemove(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+	require.NoError(t, fs.WriteFile("f", []byte("still here")))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	require.NoError(t, fs.Remove("f"))
+	_, err = fs.ReadFile("f")
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("still here"), got)
+}
+
+// TestStreamSurvivesRemoveAllParent removes the entire parent subtree while a
+// reader is open on a file inside it.
+func TestStreamSurvivesRemoveAllParent(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.Mkdir("dir"))
+	require.NoError(t, fs.Cd("dir"))
+	require.NoError(t, fs.CreateFile("f"))
+	require.NoError(t, fs.WriteFile("f", []byte("deep")))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	require.NoError(t, fs.Cd(".."))
+	require.NoError(t, fs.RemoveAll("dir"))
+
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("deep"), got)
+}
+
+// TestStreamConcurrent runs one writer and several readers against the same
+// file simultaneously. Its real purpose is to be run under `go test -race`:
+// it asserts no panic/deadlock and a consistent final length.
+func TestStreamConcurrent(t *testing.T) {
+	const writes = 200
+	const readers = 8
+
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// Single writer: extend the file one byte at a time.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < writes; i++ {
+			if _, err := w.WriteAt([]byte{'x'}, int64(i)); err != nil {
+				t.Errorf("WriteAt: %v", err)
+				return
+			}
+		}
+	}()
+
+	// Many readers hammering ReadAt + whole-file ReadFile concurrently.
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := fs.Open("f")
+			if err != nil {
+				t.Errorf("Open: %v", err)
+				return
+			}
+			defer r.Close()
+			buf := make([]byte, 16)
+			for j := 0; j < writes; j++ {
+				if _, err := r.ReadAt(buf, 0); err != nil && !errors.Is(err, io.EOF) {
+					t.Errorf("ReadAt: %v", err)
+					return
+				}
+				if _, err := fs.ReadFile("f"); err != nil {
+					t.Errorf("ReadFile: %v", err)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	require.NoError(t, w.Close())
+
+	got, err := fs.ReadFile("f")
+	require.NoError(t, err)
+	assert.Len(t, got, writes)
+}
