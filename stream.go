@@ -230,17 +230,43 @@ func (w *FileWriter) contentLen() int64 {
 
 // --- shared helpers ---
 
-// writeAt copies p into the content at off, growing the backing slice (zero-
-// filling any gap) when the write extends past the current end. Callers must
-// hold c.mu for writing.
+// writeAt copies p into the content at off, growing the backing slice when the
+// write runs past the current end. Callers must hold c.mu for writing.
+//
+// Growth is geometric (see growZeroed), so a run of appends is amortized O(1)
+// per byte. The previous implementation reallocated and copied the whole buffer
+// on every extending write, making N sequential writes O(N^2).
 func (c *fileContent) writeAt(p []byte, off int64) {
-	end := off + int64(len(p))
-	if end > int64(len(c.data)) {
-		grown := make([]byte, end)
-		copy(grown, c.data)
-		c.data = grown
+	end := int(off) + len(p)
+	if end > len(c.data) {
+		c.data = growZeroed(c.data, end)
 	}
 	copy(c.data[off:], p)
+}
+
+// growZeroed returns buf with its length extended to n (n >= len(buf)), with the
+// newly exposed bytes guaranteed zero so a write past the end leaves a zero-
+// filled gap.
+//
+// When the spare capacity already covers n it reslices in place with no
+// allocation: bytes in [len, cap) are always zero because writeAt only ever
+// writes within the logical length, so the capacity make zeroed them and
+// nothing has touched them since. Otherwise it doubles the capacity, so growth
+// amortizes to O(1) rather than reallocating on every call.
+//
+// NOTE: the in-place path relies on the length only ever growing. A future
+// truncate must zero whatever it shrinks past to preserve that invariant.
+func growZeroed(buf []byte, n int) []byte {
+	if n <= cap(buf) {
+		return buf[:n]
+	}
+	newCap := cap(buf) * 2
+	if newCap < n {
+		newCap = n
+	}
+	grown := make([]byte, n, newCap)
+	copy(grown, buf)
+	return grown
 }
 
 // resolveSeek computes the new absolute offset for a seek from cur against a

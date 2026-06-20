@@ -164,6 +164,44 @@ func TestStreamOpenErrors(t *testing.T) {
 	assert.ErrorIs(t, err, ErrIsDir)
 }
 
+// TestStreamSequentialWriteGrowsGeometrically writes a file one byte at a time
+// and asserts the backing array is reallocated only logarithmically (geometric
+// growth), not once per write. Against the old reallocate-the-whole-buffer
+// implementation this fails with reallocs == n.
+func TestStreamSequentialWriteGrowsGeometrically(t *testing.T) {
+	const n = 4096
+
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	defer w.Close()
+
+	reallocs, prevCap := 0, 0
+	for i := 0; i < n; i++ {
+		_, err := w.Write([]byte{byte(i)})
+		require.NoError(t, err)
+		if c := cap(w.c.data); c != prevCap { // single goroutine: direct read is safe
+			reallocs++
+			prevCap = c
+		}
+	}
+
+	require.Len(t, w.c.data, n)
+	// Doubling from empty to 4096 is ~13 reallocations; allow generous headroom
+	// while still being far below the per-write count (4096) of the old code.
+	assert.Less(t, reallocs, 20, "expected geometric growth, got near-per-write reallocations")
+
+	// Content is still correct end to end.
+	got, err := fs.ReadFile("f")
+	require.NoError(t, err)
+	want := make([]byte, n)
+	for i := range want {
+		want[i] = byte(i)
+	}
+	assert.Equal(t, want, got)
+}
+
 // TestStreamSurvivesMove opens a reader, renames the file out from under it,
 // and confirms the read still returns the original bytes — the handle binds to
 // content, not path.
