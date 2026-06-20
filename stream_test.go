@@ -178,7 +178,7 @@ func TestStreamSequentialWriteGrowsGeometrically(t *testing.T) {
 	defer w.Close()
 
 	reallocs, prevCap := 0, 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		_, err := w.Write([]byte{byte(i)})
 		require.NoError(t, err)
 		if c := cap(w.c.data); c != prevCap { // single goroutine: direct read is safe
@@ -281,22 +281,18 @@ func TestStreamConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Single writer: extend the file one byte at a time.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < writes; i++ {
+	wg.Go(func() {
+		for i := range writes {
 			if _, err := w.WriteAt([]byte{'x'}, int64(i)); err != nil {
 				t.Errorf("WriteAt: %v", err)
 				return
 			}
 		}
-	}()
+	})
 
 	// Many readers hammering ReadAt + whole-file ReadFile concurrently.
-	for i := 0; i < readers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range readers {
+		wg.Go(func() {
 			r, err := fs.Open("f")
 			if err != nil {
 				t.Errorf("Open: %v", err)
@@ -304,7 +300,7 @@ func TestStreamConcurrent(t *testing.T) {
 			}
 			defer r.Close()
 			buf := make([]byte, 16)
-			for j := 0; j < writes; j++ {
+			for range writes {
 				if _, err := r.ReadAt(buf, 0); err != nil && !errors.Is(err, io.EOF) {
 					t.Errorf("ReadAt: %v", err)
 					return
@@ -314,7 +310,7 @@ func TestStreamConcurrent(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

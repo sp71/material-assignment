@@ -110,7 +110,7 @@ func TestWalkConcurrentWithRename(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		cur, next := "a", "b"
-		for i := 0; i < iters; i++ {
+		for range iters {
 			if err := fs.Move(cur, next); err != nil {
 				t.Errorf("Move(%q,%q): %v", cur, next, err)
 				return
@@ -122,7 +122,7 @@ func TestWalkConcurrentWithRename(t *testing.T) {
 	// Walker: traverse repeatedly, touching every entry's name via path.
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iters; i++ {
+		for range iters {
 			_ = fs.Walk(func(string, bool) error { return nil })
 		}
 	}()

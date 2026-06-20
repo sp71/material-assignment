@@ -260,10 +260,7 @@ func growZeroed(buf []byte, n int) []byte {
 	if n <= cap(buf) {
 		return buf[:n]
 	}
-	newCap := cap(buf) * 2
-	if newCap < n {
-		newCap = n
-	}
+	newCap := max(cap(buf)*2, n)
 	grown := make([]byte, n, newCap)
 	copy(grown, buf)
 	return grown
