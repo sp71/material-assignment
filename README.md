@@ -27,6 +27,10 @@ gofmt -l .        # prints nothing when clean
 
 # Try it interactively: a tiny shell over the library
 go run ./cmd/memfsh   # type 'help' for commands, 'exit' to quit
+
+# Watch the streaming guarantees narrated end to end (reader survives a
+# rename; 1 writer + 8 readers run concurrently). Add -race to prove it clean.
+go run ./cmd/streamdemo
 ```
 
 ### Using it as a library
@@ -194,6 +198,7 @@ file.go      CreateFile, WriteFile, ReadFile, Remove, Move
 walk.go      Walk, Find, FindRegex
 stream.go    Open/OpenWriter, FileReader, FileWriter, buffer growth
 *_test.go    one test file per source file, all in package memfs
-cmd/memfsh/  an interactive shell over the library
+cmd/memfsh/     an interactive shell over the library
+cmd/streamdemo/ a narrated demo of the streaming guarantees
 docs/        PLAN.md (full design), requirements.txt (the assignment)
 ```
