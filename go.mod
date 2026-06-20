@@ -1,4 +1,4 @@
-module filesys
+module memfs
 
 go 1.26.0
 
