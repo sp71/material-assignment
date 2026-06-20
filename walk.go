@@ -35,11 +35,22 @@ func (fs *FS) Walk(fn WalkFunc) error {
 	return fs.walkDir(start, startPath, fn)
 }
 
-func (fs *FS) walkDir(dir *directory, dirPath string, fn WalkFunc) error {
-	for _, child := range fs.snapshotChildren(dir) {
-		childPath := joinPath(dirPath, child.name())
+// walkEntry is an immutable snapshot of one directory entry. The name and kind
+// are captured under the filesystem lock; the visitor then runs against the
+// snapshot. We must snapshot the name — not just the node pointer — because a
+// concurrent Move mutates a node's name field, so reading name() after the lock
+// is released would be a data race (verified by TestWalkConcurrentWithRename).
+type walkEntry struct {
+	node  node
+	name  string
+	isDir bool
+}
 
-		err := fn(childPath, child.isDir())
+func (fs *FS) walkDir(dir *directory, dirPath string, fn WalkFunc) error {
+	for _, e := range fs.snapshotChildren(dir) {
+		childPath := joinPath(dirPath, e.name)
+
+		err := fn(childPath, e.isDir)
 		if errors.Is(err, SkipDir) {
 			continue // prune: do not descend into this entry
 		}
@@ -47,7 +58,7 @@ func (fs *FS) walkDir(dir *directory, dirPath string, fn WalkFunc) error {
 			return err
 		}
 
-		if sub, ok := child.(*directory); ok {
+		if sub, ok := e.node.(*directory); ok {
 			if err := fs.walkDir(sub, childPath, fn); err != nil {
 				return err
 			}
@@ -56,20 +67,24 @@ func (fs *FS) walkDir(dir *directory, dirPath string, fn WalkFunc) error {
 	return nil
 }
 
-// snapshotChildren returns dir's children sorted by name, copied under a brief
-// read lock so the visitor can run without holding the lock.
-func (fs *FS) snapshotChildren(dir *directory) []node {
+// snapshotChildren returns dir's children as immutable entries sorted by name,
+// captured under a brief read lock so the visitor can run without holding it.
+func (fs *FS) snapshotChildren(dir *directory) []walkEntry {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
-	children := make([]node, 0, len(dir.children))
+	entries := make([]walkEntry, 0, len(dir.children))
 	for _, child := range dir.children {
-		children = append(children, child)
+		entries = append(entries, walkEntry{
+			node:  child,
+			name:  child.name(),
+			isDir: child.isDir(),
+		})
 	}
-	sort.Slice(children, func(i, j int) bool {
-		return children[i].name() < children[j].name()
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].name < entries[j].name
 	})
-	return children
+	return entries
 }
 
 // Find returns the absolute paths of every descendant of the current working

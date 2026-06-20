@@ -2,6 +2,7 @@ package memfs
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +86,48 @@ func TestFindRegex(t *testing.T) {
 
 	_, err = fs.FindRegex("[")
 	assert.Error(t, err, "an invalid pattern should return a compile error")
+}
+
+// TestWalkConcurrentWithRename runs Walk concurrently with a goroutine that
+// repeatedly renames a file the walk observes. Walk reads each entry's name,
+// and Move mutates that same node's name field; this test is meaningful only
+// under `go test -race`, which flags the read/write if Walk captures the name
+// outside the filesystem lock.
+func TestWalkConcurrentWithRename(t *testing.T) {
+	const iters = 2000
+
+	fs := New()
+	require.NoError(t, fs.CreateFile("a")) // the file being renamed back and forth
+	require.NoError(t, fs.Mkdir("sub"))    // extra entries so the walk does real work
+	require.NoError(t, fs.Cd("sub"))
+	require.NoError(t, fs.CreateFile("x"))
+	require.NoError(t, fs.Cd(".."))
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Renamer: flip the file's name under FS.mu via Move (which calls setName).
+	go func() {
+		defer wg.Done()
+		cur, next := "a", "b"
+		for i := 0; i < iters; i++ {
+			if err := fs.Move(cur, next); err != nil {
+				t.Errorf("Move(%q,%q): %v", cur, next, err)
+				return
+			}
+			cur, next = next, cur
+		}
+	}()
+
+	// Walker: traverse repeatedly, touching every entry's name via path.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iters; i++ {
+			_ = fs.Walk(func(string, bool) error { return nil })
+		}
+	}()
+
+	wg.Wait()
 }
 
 // buildTreeForFind builds a fixture with the name "target" appearing as a file
