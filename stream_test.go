@@ -3,6 +3,7 @@ package memfs
 import (
 	"errors"
 	"io"
+	"math"
 	"sync"
 	"testing"
 
@@ -200,6 +201,73 @@ func TestStreamSequentialWriteGrowsGeometrically(t *testing.T) {
 		want[i] = byte(i)
 	}
 	assert.Equal(t, want, got)
+}
+
+func TestSeekInvalid(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+	require.NoError(t, fs.WriteFile("f", []byte("hello")))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	defer w.Close()
+
+	// A bad whence and a seek that resolves to a negative offset are rejected,
+	// on both the read and write handles (they share resolveSeek).
+	const badWhence = 99
+	_, err = r.Seek(0, badWhence)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+	_, err = r.Seek(-1, io.SeekStart)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+	_, err = r.Seek(-100, io.SeekCurrent)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+
+	_, err = w.Seek(0, badWhence)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+	_, err = w.Seek(-1, io.SeekStart)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+}
+
+func TestReadAtWriteAtNegativeOffset(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	r, err := fs.Open("f")
+	require.NoError(t, err)
+	defer r.Close()
+	_, err = r.ReadAt(make([]byte, 1), -1)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	defer w.Close()
+	_, err = w.WriteAt([]byte("x"), -1)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+}
+
+// TestWriteOffsetOverflow checks that an offset so large that off+len(p)
+// overflows int64 is rejected with ErrInvalidSeek rather than panicking in a
+// huge make/slice — through both WriteAt and the offset-advancing Write path.
+func TestWriteOffsetOverflow(t *testing.T) {
+	fs := New()
+	require.NoError(t, fs.CreateFile("f"))
+
+	w, err := fs.OpenWriter("f")
+	require.NoError(t, err)
+	defer w.Close()
+
+	_, err = w.WriteAt([]byte("data"), math.MaxInt64-1)
+	assert.ErrorIs(t, err, ErrInvalidSeek)
+
+	// Seeking to a huge offset is allowed; the overflow is caught at Write time.
+	_, err = w.Seek(math.MaxInt64-1, io.SeekStart)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("data"))
+	assert.ErrorIs(t, err, ErrInvalidSeek)
 }
 
 // TestStreamSurvivesMove opens a reader, renames the file out from under it,

@@ -16,7 +16,6 @@ type node interface {
 	name() string
 	setName(string)
 	parent() *directory
-	setParent(*directory)
 	// isDir reports whether the node is a directory, so traversal code can
 	// branch without a type switch at every call site.
 	isDir() bool
@@ -39,11 +38,10 @@ func newDir(name string, parent *directory) *directory {
 	}
 }
 
-func (d *directory) name() string           { return d.nodeName }
-func (d *directory) setName(n string)       { d.nodeName = n }
-func (d *directory) parent() *directory     { return d.par }
-func (d *directory) setParent(p *directory) { d.par = p }
-func (d *directory) isDir() bool            { return true }
+func (d *directory) name() string       { return d.nodeName }
+func (d *directory) setName(n string)   { d.nodeName = n }
+func (d *directory) parent() *directory { return d.par }
+func (d *directory) isDir() bool        { return true }
 
 // file is a leaf node. Its directory entry holds only naming/placement; the
 // bytes live in a separately-allocated fileContent that the entry points at.
@@ -63,11 +61,10 @@ func newFile(name string, parent *directory) *file {
 	}
 }
 
-func (f *file) name() string           { return f.nodeName }
-func (f *file) setName(n string)       { f.nodeName = n }
-func (f *file) parent() *directory     { return f.par }
-func (f *file) setParent(p *directory) { f.par = p }
-func (f *file) isDir() bool            { return false }
+func (f *file) name() string       { return f.nodeName }
+func (f *file) setName(n string)   { f.nodeName = n }
+func (f *file) parent() *directory { return f.par }
+func (f *file) isDir() bool        { return false }
 
 // fileContent is the shared, lockable identity of a file's bytes. One exists
 // per file; open stream handles keep a pointer to it. Its mutex guards both the

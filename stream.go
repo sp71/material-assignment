@@ -167,7 +167,9 @@ func (w *FileWriter) Write(p []byte) (int, error) {
 
 	w.c.mu.Lock()
 	defer w.c.mu.Unlock()
-	w.c.writeAt(p, w.off)
+	if err := w.c.writeAt(p, w.off); err != nil {
+		return 0, err
+	}
 	w.off += int64(len(p))
 	return len(p), nil
 }
@@ -187,7 +189,9 @@ func (w *FileWriter) WriteAt(p []byte, off int64) (int, error) {
 
 	w.c.mu.Lock()
 	defer w.c.mu.Unlock()
-	w.c.writeAt(p, off)
+	if err := w.c.writeAt(p, off); err != nil {
+		return 0, err
+	}
 	return len(p), nil
 }
 
@@ -233,15 +237,22 @@ func (w *FileWriter) contentLen() int64 {
 // writeAt copies p into the content at off, growing the backing slice when the
 // write runs past the current end. Callers must hold c.mu for writing.
 //
-// Growth is geometric (see growZeroed), so a run of appends is amortized O(1)
-// per byte. The previous implementation reallocated and copied the whole buffer
-// on every extending write, making N sequential writes O(N^2).
-func (c *fileContent) writeAt(p []byte, off int64) {
-	end := int(off) + len(p)
-	if end > len(c.data) {
-		c.data = growZeroed(c.data, end)
+// It rejects a negative offset and one so large that off+len(p) overflows int64
+// (which would otherwise corrupt the length math and panic in make/slice),
+// returning ErrInvalidSeek. Growth is geometric (see growZeroed), so a run of
+// appends is amortized O(1) per byte; the previous implementation reallocated
+// and copied the whole buffer on every extending write, making N sequential
+// writes O(N^2).
+func (c *fileContent) writeAt(p []byte, off int64) error {
+	end := off + int64(len(p))
+	if off < 0 || end < off { // end < off can only mean int64 overflow here
+		return ErrInvalidSeek
+	}
+	if end > int64(len(c.data)) {
+		c.data = growZeroed(c.data, int(end))
 	}
 	copy(c.data[off:], p)
+	return nil
 }
 
 // growZeroed returns buf with its length extended to n (n >= len(buf)), with the
