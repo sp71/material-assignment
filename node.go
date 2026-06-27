@@ -43,6 +43,33 @@ func (d *directory) setName(n string)   { d.nodeName = n }
 func (d *directory) parent() *directory { return d.par }
 func (d *directory) isDir() bool        { return true }
 
+func (d *directory) lookupChild(name string) (*directory, error) {
+	child, ok := d.children[name]
+	if !ok {
+		return nil, wrap(name, ErrNotFound)
+	}
+	dir, ok := child.(*directory)
+	if !ok {
+		return nil, wrap(name, ErrNotDir)
+	}
+	return dir, nil
+}
+
+func (d *directory) lookupFile(name string) (*file, error) {
+	if err := validateName(name); err != nil {
+		return nil, wrap(name, err)
+	}
+	child, ok := d.children[name]
+	if !ok {
+		return nil, wrap(name, ErrNotFound)
+	}
+	f, ok := child.(*file)
+	if !ok {
+		return nil, wrap(name, ErrIsDir)
+	}
+	return f, nil
+}
+
 // file is a leaf node. Its directory entry holds only naming/placement; the
 // bytes live in a separately-allocated fileContent that the entry points at.
 // This split is the crux of the streaming design: an open handle binds to the

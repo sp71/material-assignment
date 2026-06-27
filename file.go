@@ -26,7 +26,10 @@ func (fs *FS) CreateFile(name string) error {
 // content lock for the copy — so it is memory-safe even while a streaming
 // writer is open on the same file (the two serialize on the content lock).
 func (fs *FS) WriteFile(name string, data []byte) error {
-	f, err := fs.resolveFile(name)
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	f, err := fs.cwd.lookupFile(name)
 	if err != nil {
 		return err
 	}
@@ -43,7 +46,10 @@ func (fs *FS) WriteFile(name string, data []byte) error {
 // directory. Returns ErrNotFound if there is no such file and ErrIsDir if the
 // name refers to a directory. The returned slice is a copy and safe to retain.
 func (fs *FS) ReadFile(name string) ([]byte, error) {
-	f, err := fs.resolveFile(name)
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	f, err := fs.cwd.lookupFile(name)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +88,14 @@ func (fs *FS) Remove(name string) error {
 // taken. Because identity lives in the file node (not its path), the rename is
 // an O(1) re-key and any open stream handle is unaffected.
 func (fs *FS) Move(oldName, newName string) error {
+	if err := validateName(oldName); err != nil {
+		return wrap(newName, err)
+	}
 	if err := validateName(newName); err != nil {
 		return wrap(newName, err)
+	}
+	if oldName == newName {
+		return nil
 	}
 
 	fs.mu.Lock()
@@ -95,9 +107,6 @@ func (fs *FS) Move(oldName, newName string) error {
 	}
 	if child.isDir() {
 		return wrap(oldName, ErrIsDir)
-	}
-	if oldName == newName {
-		return nil
 	}
 	if _, exists := fs.cwd.children[newName]; exists {
 		return wrap(newName, ErrExists)

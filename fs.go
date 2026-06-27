@@ -62,13 +62,9 @@ func (fs *FS) Cd(name string) error {
 		return nil
 	}
 
-	child, ok := fs.cwd.children[name]
-	if !ok {
-		return wrap(name, ErrNotFound)
-	}
-	dir, ok := child.(*directory)
-	if !ok {
-		return wrap(name, ErrNotDir)
+	dir, err := fs.cwd.lookupChild(name)
+	if err != nil {
+		return err
 	}
 	fs.cwd = dir
 	return nil
@@ -87,27 +83,4 @@ func (fs *FS) Ls() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// resolveFile resolves name to a *file in the current working directory under a
-// brief read lock, releasing it before returning. It is the shared resolution
-// step for the file-content and streaming operations: they take the file's own
-// content lock only after FS.mu is released, never nesting the two. Returns
-// ErrInvalidName, ErrNotFound, or ErrIsDir.
-func (fs *FS) resolveFile(name string) (*file, error) {
-	fs.mu.RLock()
-	defer fs.mu.RUnlock()
-
-	if err := validateName(name); err != nil {
-		return nil, wrap(name, err)
-	}
-	child, ok := fs.cwd.children[name]
-	if !ok {
-		return nil, wrap(name, ErrNotFound)
-	}
-	f, ok := child.(*file)
-	if !ok {
-		return nil, wrap(name, ErrIsDir)
-	}
-	return f, nil
 }

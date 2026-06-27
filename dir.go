@@ -26,7 +26,7 @@ func (fs *FS) RemoveDir(name string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	dir, err := fs.lookupChildDir(name)
+	dir, err := fs.cwd.lookupChild(name)
 	if err != nil {
 		return err
 	}
@@ -49,24 +49,9 @@ func (fs *FS) RemoveAll(name string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	if _, err := fs.lookupChildDir(name); err != nil {
+	if _, err := fs.cwd.lookupChild(name); err != nil {
 		return err
 	}
 	delete(fs.cwd.children, name)
 	return nil
-}
-
-// lookupChildDir resolves name to a child *directory of the current working
-// directory. It must be called with FS.mu held for writing (its callers mutate
-// the tree). Returns ErrNotFound or ErrNotDir as appropriate.
-func (fs *FS) lookupChildDir(name string) (*directory, error) {
-	child, ok := fs.cwd.children[name]
-	if !ok {
-		return nil, wrap(name, ErrNotFound)
-	}
-	dir, ok := child.(*directory)
-	if !ok {
-		return nil, wrap(name, ErrNotDir)
-	}
-	return dir, nil
 }
